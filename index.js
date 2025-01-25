@@ -50,13 +50,10 @@ const isValidAmount = (input) => {
   return !isNaN(amount) && amount > 0 && input === amount.toString();
 };
 
-// --------------------- Function Definitions ---------------------
+// --------------------- Withdrawal Logic (ETH & USDC) with 1% Fee ---------------------
 
 /**
  * Initiates an ETH withdrawal to the user's wallet with a 1% fee.
- * @param {string} toAddress - The Ethereum address of the user.
- * @param {number} amount - The amount of ETH to withdraw.
- * @returns {Promise<string>} - Returns the transaction hash.
  */
 const withdrawETH = async (toAddress, amount) => {
   try {
@@ -83,8 +80,6 @@ const withdrawETH = async (toAddress, amount) => {
     });
 
     logger.info(`ETH Withdrawal Transaction Hash (User): ${txUser.hash}`);
-
-    // Wait for the transaction to be mined
     await txUser.wait();
 
     // Create transaction to team wallet for fee
@@ -94,11 +89,9 @@ const withdrawETH = async (toAddress, amount) => {
     });
 
     logger.info(`ETH Withdrawal Transaction Hash (Fee): ${txFee.hash}`);
-
-    // Wait for the transaction to be mined
     await txFee.wait();
 
-    return txUser.hash; // Optionally return both hashes if needed
+    return txUser.hash;
   } catch (error) {
     logger.error(`Error withdrawing ETH to ${toAddress}:`, error);
     throw error;
@@ -107,13 +100,9 @@ const withdrawETH = async (toAddress, amount) => {
 
 /**
  * Initiates a USDC withdrawal to the user's wallet with a 1% fee.
- * @param {string} toAddress - The Ethereum address of the user.
- * @param {number} amount - The amount of USDC to withdraw.
- * @returns {Promise<string>} - Returns the transaction hash.
  */
 const withdrawUSDC = async (toAddress, amount) => {
   try {
-    // USDC has 6 decimals
     const decimals = 6;
 
     // Calculate 1% fee
@@ -137,8 +126,6 @@ const withdrawUSDC = async (toAddress, amount) => {
     // Create transaction to user
     const txUser = await usdcContract.transfer(toAddress, amountWithDecimals);
     logger.info(`USDC Withdrawal Transaction Hash (User): ${txUser.hash}`);
-
-    // Wait for the transaction to be mined
     await txUser.wait();
 
     // Create transaction to team wallet for fee
@@ -147,21 +134,19 @@ const withdrawUSDC = async (toAddress, amount) => {
       feeWithDecimals
     );
     logger.info(`USDC Withdrawal Transaction Hash (Fee): ${txFee.hash}`);
-
-    // Wait for the transaction to be mined
     await txFee.wait();
 
-    return txUser.hash; // Optionally return both hashes if needed
+    return txUser.hash;
   } catch (error) {
     logger.error(`Error withdrawing USDC to ${toAddress}:`, error);
     throw error;
   }
 };
 
+// --------------------- handleBet (Slots) ---------------------
+
 /**
  * Handles the betting logic for the Play Slots feature.
- * @param {Telegraf.Context} ctx - The Telegraf context.
- * @param {number} betAmount - The amount of USDC the user wants to bet.
  */
 const handleBet = async (ctx, betAmount) => {
   const telegramId = ctx.from.id;
@@ -182,26 +167,31 @@ const handleBet = async (ctx, betAmount) => {
       return;
     }
 
-    // Define maximum withdrawal limits (optional)
-    const MAX_ETH_WITHDRAWAL = 100; // Example limit
-    const MAX_USDC_WITHDRAWAL = 10000; // Example limit
-
     // Deduct bet amount from user's USDC balance
-    const newUsdcBalance = parseFloat((user.usdc_balance - betAmount).toFixed(6));
+    const newUsdcBalance = parseFloat(
+      (user.usdc_balance - betAmount).toFixed(6)
+    );
     await sqliteDB.updateUserUsdcBalance(telegramId, newUsdcBalance);
     logger.info(
       `User ${telegramId} placed a bet of ${betAmount} USDC. New USDC balance: ${newUsdcBalance} USDC`
     );
 
-    // Simulate slot game result
+    // Simulate slot game result (25% chance for "win")
     const result = Math.random() < 0.25 ? 'win' : 'lose';
+
     if (result === 'win') {
-      // Define payout logic, e.g., 2x bet
+      // Random dancing GIF array
+      const dancingGifs = [
+        'https://media0.giphy.com/media/v1.Y2lkPTc5MGI3NjExbnhkbGNleDZtcmF6bHRuZTA3OXl2MmR1MXlrbDk2NzcxMGFlbmQwMCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/26wAd6uzCRP5VwLW8/giphy.gif'
+      ];
+      const randomGif = dancingGifs[Math.floor(Math.random() * dancingGifs.length)];
+
+      // Normal payout logic (2x)
       const payout = betAmount * 2;
-      const updatedUsdcBalance = parseFloat(
-        (newUsdcBalance + payout).toFixed(6)
-      );
+      const updatedUsdcBalance = parseFloat((newUsdcBalance + payout).toFixed(6));
       await sqliteDB.updateUserUsdcBalance(telegramId, updatedUsdcBalance);
+
+      await ctx.replyWithAnimation(randomGif); // Dancing GIF
       await ctx.reply(
         `🎉 *You won!*\n\nPayout: *${payout} USDC*\n\n*Your new USDC balance:* ${updatedUsdcBalance} USDC`,
         { parse_mode: 'Markdown' }
@@ -209,7 +199,26 @@ const handleBet = async (ctx, betAmount) => {
       logger.info(
         `User ${telegramId} won ${payout} USDC. New USDC balance: ${updatedUsdcBalance} USDC`
       );
+
+      // *** JACKPOT Offer if user has >= 10,000 USDC ***
+      if (updatedUsdcBalance >= 10000) {
+        await ctx.reply(
+          '💥 You now have *10,000 USDC* or more! Want to try a *Jackpot Bet* for the entire pool?',
+          {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([
+              [Markup.button.callback('🔥 Jackpot Bet (10,000 USDC)', 'jackpot_bet')],
+              [Markup.button.callback('No Thanks', 'main_menu')],
+            ]),
+          }
+        );
+
+        // *** FIX: Exit the play_scene after offering the jackpot bet ***
+        await ctx.scene.leave(); // Exit the play_scene
+        return; // Exit the function to wait for user action on jackpot
+      }
     } else {
+      // Lost bet
       await ctx.reply(
         `😞 *You lost ${betAmount} USDC.*\n\n*Your new USDC balance:* ${newUsdcBalance} USDC`,
         { parse_mode: 'Markdown' }
@@ -219,7 +228,7 @@ const handleBet = async (ctx, betAmount) => {
       );
     }
 
-    // Exit the scene and return to main menu
+    // If no jackpot offer, just leave scene & show main menu
     await ctx.scene.leave();
     await sendMainMenu(ctx);
   } catch (error) {
@@ -228,31 +237,49 @@ const handleBet = async (ctx, betAmount) => {
   }
 };
 
+// --------------------- sendMainMenu ---------------------
+
 /**
  * Sends the main menu to the user with various options.
- * @param {Telegraf.Context} ctx - The Telegraf context.
  */
 const sendMainMenu = async (ctx) => {
   const mainMenuMessage = `
 🏠 *Main Menu*
 
+Try your luck for the **JACKPOT** after every win (10,000+ USDC bet)!
+
 Choose an option below:
     `;
 
+  // Added '💎 View Pool' button
   const inlineButtons = Markup.inlineKeyboard([
-    [Markup.button.callback('🎰 Play Slots', 'play'), Markup.button.callback('💵 Deposit Funds', 'deposit')],
-    [Markup.button.callback('💰 Withdraw Funds', 'withdraw'), Markup.button.callback('📊 View Balance', 'balance')],
-    [Markup.button.callback('🏆 Leaderboard', 'leaderboard'), Markup.button.callback('❓ Help', 'help')],
+    [
+      Markup.button.callback('🎰 Play Slots', 'play'),
+      Markup.button.callback('💵 Deposit Funds', 'deposit'),
+    ],
+    [
+      Markup.button.callback('💰 Withdraw Funds', 'withdraw'),
+      Markup.button.callback('📊 View Balance', 'balance'),
+    ],
+    [
+      Markup.button.callback('🏆 Leaderboard', 'leaderboard'),
+      Markup.button.callback('❓ Help', 'help'),
+    ],
+    [
+      Markup.button.callback('💎 Jackpot Pool', 'view_pool'), // Added 'View Pool'
+    ],
   ]);
 
+  logger.info(`Sending Main Menu to Telegram ID ${ctx.from.id}`);
   await ctx.reply(mainMenuMessage, {
     parse_mode: 'Markdown',
     ...inlineButtons,
   });
 };
 
-// --------------------- Scene Definitions ---------------------
+// --------------------- Scenes ---------------------
 
+// Registration Scene
 const registrationScene = new Scenes.BaseScene('registration');
 registrationScene.enter((ctx) => {
   logger.info(`Entering registration scene for Telegram ID ${ctx.from.id}`);
@@ -266,7 +293,6 @@ registrationScene.on('text', async (ctx) => {
   const telegramId = ctx.from.id;
   const walletAddress = ctx.message.text.trim();
 
-  // Validate Ethereum address
   if (!ethers.utils.isAddress(walletAddress)) {
     await ctx.reply('❌ *Invalid Ethereum address.* Please send a valid address.', {
       parse_mode: 'Markdown',
@@ -294,18 +320,25 @@ registrationScene.on('message', (ctx) => {
   ctx.reply('❌ Please send a valid Ethereum wallet address to register.');
 });
 
-/**
- * Play Scene
- */
+// Play Scene
 const playScene = new Scenes.BaseScene('play_scene');
 playScene.enter((ctx) => {
   logger.info(`Entering play_scene for Telegram ID ${ctx.from.id}`);
   ctx.reply('🎰 *Play Slots*\n\nChoose your bet amount:', {
     parse_mode: 'Markdown',
     ...Markup.inlineKeyboard([
-      [Markup.button.callback('💵 5 USDC', 'bet_usdc_5'), Markup.button.callback('💵 10 USDC', 'bet_usdc_10')],
-      [Markup.button.callback('💵 100 USDC', 'bet_usdc_100'), Markup.button.callback('💵 1,000 USDC', 'bet_usdc_1000')],
-      [Markup.button.callback('💵 10,000 USDC', 'bet_usdc_10000'), Markup.button.callback('🔙 Back to Main Menu', 'main_menu')],
+      [
+        Markup.button.callback('💵 5 USDC', 'bet_usdc_5'),
+        Markup.button.callback('💵 10 USDC', 'bet_usdc_10'),
+      ],
+      [
+        Markup.button.callback('💵 100 USDC', 'bet_usdc_100'),
+        Markup.button.callback('💵 1,000 USDC', 'bet_usdc_1000'),
+      ],
+      [
+        Markup.button.callback('💵 10,000 USDC', 'bet_usdc_10000'),
+        Markup.button.callback('🔙 Back to Main Menu', 'main_menu'),
+      ],
     ]),
   });
 });
@@ -337,15 +370,14 @@ playScene.on('callback_query', async (ctx) => {
       await sendMainMenu(ctx);
       break;
     default:
-      await ctx.reply('⚠️ *Unknown action in Play Slots.* Please try again.', { parse_mode: 'Markdown' });
+      await ctx.reply('⚠️ *Unknown action in Play Slots.* Please try again.', {
+        parse_mode: 'Markdown',
+      });
   }
-
   await ctx.answerCbQuery();
 });
 
-/**
- * Deposit Scene
- */
+// Deposit Scene
 const depositScene = new Scenes.BaseScene('deposit_scene');
 depositScene.enter(async (ctx) => {
   logger.info(`Entering deposit_scene for Telegram ID ${ctx.from.id}`);
@@ -355,7 +387,10 @@ depositScene.enter(async (ctx) => {
   await ctx.reply(depositMessage, {
     parse_mode: 'Markdown',
     ...Markup.inlineKeyboard([
-      [Markup.button.callback('🔄 Refresh Deposit Instructions', 'deposit'), Markup.button.callback('🔙 Back to Main Menu', 'main_menu')],
+      [
+        Markup.button.callback('🔄 Refresh Deposit Instructions', 'deposit'),
+        Markup.button.callback('🔙 Back to Main Menu', 'main_menu'),
+      ],
     ]),
   });
 });
@@ -364,25 +399,25 @@ depositScene.on('callback_query', async (ctx) => {
   const data = ctx.callbackQuery.data;
 
   switch (data) {
-    case 'deposit':
+    case 'deposit': {
       const poolAddress = process.env.POOL_ADDRESS;
       const updatedDepositMessage = `📥 *Depositing Funds*\n\nPlease transfer your desired amount to the pool address below:\n\n- *USDC:* ${poolAddress}\n- *ETH:* ${poolAddress}\n\nYour balances will update automatically upon successful deposits.`;
       await ctx.reply(updatedDepositMessage, { parse_mode: 'Markdown' });
       break;
+    }
     case 'main_menu':
       await ctx.scene.leave();
       await sendMainMenu(ctx);
       break;
     default:
-      await ctx.reply('⚠️ *Unknown action in Deposit Funds.* Please try again.', { parse_mode: 'Markdown' });
+      await ctx.reply('⚠️ *Unknown action in Deposit Funds.* Please try again.', {
+        parse_mode: 'Markdown',
+      });
   }
-
   await ctx.answerCbQuery();
 });
 
-/**
- * Leaderboard Scene
- */
+// Leaderboard Scene
 const leaderboardScene = new Scenes.BaseScene('leaderboard_scene');
 leaderboardScene.enter(async (ctx) => {
   logger.info(`Entering leaderboard_scene for Telegram ID ${ctx.from.id}`);
@@ -400,13 +435,18 @@ leaderboardScene.enter(async (ctx) => {
       }
       let leaderboard = '🏆 *Leaderboard*\n\n';
       rows.forEach((row, index) => {
-        leaderboard += `${index + 1}. Telegram ID: ${row.telegram_id}\n   - ETH: ${row.eth_balance.toFixed(6)} ETH\n   - USDC: ${row.usdc_balance.toFixed(6)} USDC\n\n`;
+        leaderboard += `${index + 1}. Telegram ID: ${row.telegram_id}\n   - ETH: ${row.eth_balance.toFixed(
+          6
+        )} ETH\n   - USDC: ${row.usdc_balance.toFixed(6)} USDC\n\n`;
       });
 
       await ctx.reply(leaderboard, {
         parse_mode: 'Markdown',
         ...Markup.inlineKeyboard([
-          [Markup.button.callback('🔄 Refresh Leaderboard', 'leaderboard'), Markup.button.callback('🔙 Back to Main Menu', 'main_menu')],
+          [
+            Markup.button.callback('🔄 Refresh Leaderboard', 'leaderboard'),
+            Markup.button.callback('🔙 Back to Main Menu', 'main_menu'),
+          ],
         ]),
       });
     });
@@ -420,7 +460,7 @@ leaderboardScene.on('callback_query', async (ctx) => {
   const data = ctx.callbackQuery.data;
 
   switch (data) {
-    case 'leaderboard':
+    case 'leaderboard': {
       try {
         const query = `SELECT telegram_id, eth_balance, usdc_balance FROM users ORDER BY usdc_balance DESC, eth_balance DESC LIMIT 10`;
         sqliteDB.db.all(query, [], async (err, rows) => {
@@ -435,13 +475,18 @@ leaderboardScene.on('callback_query', async (ctx) => {
           }
           let leaderboard = '🏆 *Leaderboard*\n\n';
           rows.forEach((row, index) => {
-            leaderboard += `${index + 1}. Telegram ID: ${row.telegram_id}\n   - ETH: ${row.eth_balance.toFixed(6)} ETH\n   - USDC: ${row.usdc_balance.toFixed(6)} USDC\n\n`;
+            leaderboard += `${index + 1}. Telegram ID: ${row.telegram_id}\n   - ETH: ${row.eth_balance.toFixed(
+              6
+            )} ETH\n   - USDC: ${row.usdc_balance.toFixed(6)} USDC\n\n`;
           });
 
           await ctx.reply(leaderboard, {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
-              [Markup.button.callback('🔄 Refresh Leaderboard', 'leaderboard'), Markup.button.callback('🔙 Back to Main Menu', 'main_menu')],
+              [
+                Markup.button.callback('🔄 Refresh Leaderboard', 'leaderboard'),
+                Markup.button.callback('🔙 Back to Main Menu', 'main_menu'),
+              ],
             ]),
           });
         });
@@ -450,6 +495,7 @@ leaderboardScene.on('callback_query', async (ctx) => {
         logger.error('Error fetching leaderboard:', error);
       }
       break;
+    }
     case 'main_menu':
       await ctx.scene.leave();
       await sendMainMenu(ctx);
@@ -459,13 +505,10 @@ leaderboardScene.on('callback_query', async (ctx) => {
         parse_mode: 'Markdown',
       });
   }
-
   await ctx.answerCbQuery();
 });
 
-/**
- * Balance Scene
- */
+// Balance Scene
 const balanceScene = new Scenes.BaseScene('balance_scene');
 balanceScene.enter(async (ctx) => {
   logger.info(`Entering balance_scene for Telegram ID ${ctx.from.id}`);
@@ -473,7 +516,9 @@ balanceScene.enter(async (ctx) => {
   try {
     const user = await sqliteDB.getUserByTelegramId(telegramId);
     if (!user) {
-      await ctx.reply('❌ You are not registered. Please use /start to register your wallet address.');
+      await ctx.reply(
+        '❌ You are not registered. Please use /start to register your wallet address.'
+      );
       return;
     }
     const usdcBalance = user.usdc_balance.toFixed(6);
@@ -483,8 +528,14 @@ balanceScene.enter(async (ctx) => {
     await ctx.reply(balanceMessage, {
       parse_mode: 'Markdown',
       ...Markup.inlineKeyboard([
-        [Markup.button.callback('🔄 Refresh Balance', 'balance'), Markup.button.callback('🎰 Play Slots', 'play')],
-        [Markup.button.callback('💵 Deposit Funds', 'deposit'), Markup.button.callback('💰 Withdraw Funds', 'withdraw')],
+        [
+          Markup.button.callback('🔄 Refresh Balance', 'balance'),
+          Markup.button.callback('🎰 Play Slots', 'play'),
+        ],
+        [
+          Markup.button.callback('💵 Deposit Funds', 'deposit'),
+          Markup.button.callback('💰 Withdraw Funds', 'withdraw'),
+        ],
       ]),
     });
   } catch (error) {
@@ -497,7 +548,7 @@ balanceScene.on('callback_query', async (ctx) => {
   const data = ctx.callbackQuery.data;
 
   switch (data) {
-    case 'balance':
+    case 'balance': {
       try {
         const telegramId = ctx.from.id;
         const user = await sqliteDB.getUserByTelegramId(telegramId);
@@ -512,8 +563,14 @@ balanceScene.on('callback_query', async (ctx) => {
         await ctx.reply(balanceMessage, {
           parse_mode: 'Markdown',
           ...Markup.inlineKeyboard([
-            [Markup.button.callback('🔄 Refresh Balance', 'balance'), Markup.button.callback('🎰 Play Slots', 'play')],
-            [Markup.button.callback('💵 Deposit Funds', 'deposit'), Markup.button.callback('💰 Withdraw Funds', 'withdraw')],
+            [
+              Markup.button.callback('🔄 Refresh Balance', 'balance'),
+              Markup.button.callback('🎰 Play Slots', 'play'),
+            ],
+            [
+              Markup.button.callback('💵 Deposit Funds', 'deposit'),
+              Markup.button.callback('💰 Withdraw Funds', 'withdraw'),
+            ],
           ]),
         });
       } catch (error) {
@@ -521,6 +578,7 @@ balanceScene.on('callback_query', async (ctx) => {
         logger.error(`Error fetching balances:`, error);
       }
       break;
+    }
     case 'play':
       await ctx.scene.enter('play_scene');
       break;
@@ -531,15 +589,14 @@ balanceScene.on('callback_query', async (ctx) => {
       await ctx.scene.enter('withdraw_scene');
       break;
     default:
-      await ctx.reply('⚠️ *Unknown action in Balance.* Please try again.', { parse_mode: 'Markdown' });
+      await ctx.reply('⚠️ *Unknown action in Balance.* Please try again.', {
+        parse_mode: 'Markdown',
+      });
   }
-
   await ctx.answerCbQuery();
 });
 
-/**
- * Help Scene
- */
+// Help Scene
 const helpScene = new Scenes.BaseScene('help_scene');
 helpScene.enter(async (ctx) => {
   logger.info(`Entering help_scene for Telegram ID ${ctx.from.id}`);
@@ -564,13 +621,21 @@ helpScene.enter(async (ctx) => {
 6. *Leaderboard:* See how you rank against other users with /leaderboard.
 
 Feel free to reach out if you have any questions or need assistance!
+
+Open Source Project from FU STUDIOS: github.com/sp0oby/fu-money-mania
   `;
 
   await ctx.reply(helpMessage, {
     parse_mode: 'Markdown',
     ...Markup.inlineKeyboard([
-      [Markup.button.callback('📈 View Leaderboard', 'leaderboard'), Markup.button.callback('💰 Withdraw Funds', 'withdraw')],
-      [Markup.button.callback('🎰 Play Slots', 'play'), Markup.button.callback('🔍 Check Balance', 'balance')],
+      [
+        Markup.button.callback('📈 View Leaderboard', 'leaderboard'),
+        Markup.button.callback('💰 Withdraw Funds', 'withdraw'),
+      ],
+      [
+        Markup.button.callback('🎰 Play Slots', 'play'),
+        Markup.button.callback('🔍 Check Balance', 'balance'),
+      ],
     ]),
   });
 });
@@ -592,20 +657,19 @@ helpScene.on('callback_query', async (ctx) => {
       await ctx.scene.enter('balance_scene');
       break;
     default:
-      await ctx.reply('⚠️ *Unknown action in Help.* Please try again.', { parse_mode: 'Markdown' });
+      await ctx.reply('⚠️ *Unknown action in Help.* Please try again.', {
+        parse_mode: 'Markdown',
+      });
   }
-
   await ctx.answerCbQuery();
 });
 
-/**
- * Withdraw Scene
- */
+// Withdraw Scene
 const withdrawScene = new Scenes.BaseScene('withdraw_scene');
 withdrawScene.enter(async (ctx) => {
   logger.info(`Entering withdraw_scene for Telegram ID ${ctx.from.id}`);
   await ctx.reply(
-    '💰 *Withdraw Funds*\n\nPlease choose the currency you wish to withdraw. Note that a *1% fee* will be deducted from your withdrawal:',
+    '💰 *Withdraw Funds*\n\nPlease choose the currency you wish to withdraw. Note that a *1% fee* will be deducted from your USDC withdrawal:',
     {
       parse_mode: 'Markdown',
       ...Markup.inlineKeyboard([
@@ -622,14 +686,14 @@ withdrawScene.on('callback_query', async (ctx) => {
   switch (data) {
     case 'withdraw_eth':
       await ctx.reply(
-        '💰 *ETH Withdrawal*\n\nPlease enter the amount of ETH you wish to withdraw. A *1% fee* will be deducted from your withdrawal and added to FU MONEY liquidity.:',
+        '💰 *ETH Withdrawal*\n\nPlease enter the amount of ETH you wish to withdraw (Ex: 0.1.)',
         { parse_mode: 'Markdown' }
       );
       ctx.session.state = 'awaiting_eth_withdrawal';
       break;
     case 'withdraw_usdc':
       await ctx.reply(
-        '💰 *USDC Withdrawal*\n\nPlease enter the amount of USDC you wish to withdraw. A *1% fee* will be deducted and BURNED from your withdrawal:',
+        '💰 *USDC Withdrawal*\n\nPlease enter the amount of USDC you wish to withdraw. A *1% fee* will be deducted...',
         { parse_mode: 'Markdown' }
       );
       ctx.session.state = 'awaiting_usdc_withdrawal';
@@ -643,12 +707,109 @@ withdrawScene.on('callback_query', async (ctx) => {
         parse_mode: 'Markdown',
       });
   }
-
   await ctx.answerCbQuery();
 });
 
-// --------------------- Scene Registration ---------------------
+// --------------------- NEW: Jackpot Scene ---------------------
+const jackpotScene = new Scenes.BaseScene('jackpot_scene');
+jackpotScene.enter(async (ctx) => {
+  logger.info(`Entering jackpot_scene for Telegram ID ${ctx.from.id}`);
+  await ctx.reply(
+    '🔥 *Jackpot Bet*\n\nBet *10,000 USDC* for a *chance* to win *the entire jackpot pool*. Proceed?',
+    {
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback('YES - Bet 10,000 USDC', 'jackpot_yes')],
+        [Markup.button.callback('NO - Back to Main Menu', 'jackpot_no')],
+      ]),
+    }
+  );
+});
 
+jackpotScene.on('callback_query', async (ctx) => {
+  const data = ctx.callbackQuery.data;
+  const telegramId = ctx.from.id;
+
+  logger.info(`Jackpot Scene Callback Query: ${data} from Telegram ID ${telegramId}`);
+
+  switch (data) {
+    case 'jackpot_yes': {
+      try {
+        const user = await sqliteDB.getUserByTelegramId(telegramId);
+        if (!user) {
+          await ctx.reply('❌ You are not registered. Please /start first.');
+          await ctx.scene.leave();
+          return;
+        }
+        // Check 10,000 USDC
+        if (user.usdc_balance < 10000) {
+          await ctx.reply('❌ You no longer have 10,000 USDC. Bet canceled.');
+          await ctx.scene.leave();
+          return;
+        }
+
+        // Deduct 10,000 from local DB
+        const newBalance = parseFloat((user.usdc_balance - 10000).toFixed(6));
+        await sqliteDB.updateUserUsdcBalance(telegramId, newBalance);
+
+        // 3% chance
+        const chance = Math.random();
+        if (chance < 0.03) {
+          // JACKPOT WIN: add entire pool pot to user local balance
+          const potBalanceBN = await usdcContract.balanceOf(process.env.POOL_ADDRESS);
+          const potBalanceNum = parseFloat(ethers.utils.formatUnits(potBalanceBN, 6));
+
+          const updatedBalance = parseFloat((newBalance + potBalanceNum).toFixed(6));
+          await sqliteDB.updateUserUsdcBalance(telegramId, updatedBalance);
+
+          // Dancing GIF
+          const dancingGifs = [
+            'https://media0.giphy.com/media/v1.Y2lkPTc5MGI3NjExbnhkbGNleDZtcmF6bHRuZTA3OXl2MmR1MXlrbDk2NzcxMGFlbmQwMCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/26wAd6uzCRP5VwLW8/giphy.gif'
+          ];
+          const randomGif = dancingGifs[Math.floor(Math.random() * dancingGifs.length)];
+
+          await ctx.reply(
+            `🎉 *JACKPOT WIN!*\n\nYou won the *entire pool* of ${potBalanceNum.toFixed(
+              2
+            )} USDC! It's added to your local balance.`,
+            { parse_mode: 'Markdown' }
+          );
+          await ctx.replyWithAnimation(randomGif);
+
+          logger.info(
+            `User ${telegramId} WON JACKPOT => pot ${potBalanceNum}, new local balance = ${updatedBalance}`
+          );
+        } else {
+          await ctx.reply('😞 You lost the Jackpot Bet of 10,000 USDC. Better luck next time!', {
+            parse_mode: 'Markdown',
+          });
+          logger.info(
+            `User ${telegramId} lost JACKPOT bet => new local balance = ${newBalance}`
+          );
+        }
+
+        await ctx.scene.leave();
+        await sendMainMenu(ctx);
+      } catch (err) {
+        logger.error('Error processing jackpot bet:', err);
+        await ctx.reply('❌ An error occurred with your jackpot bet. Please try again later.');
+        await ctx.scene.leave();
+      }
+      break;
+    }
+    case 'jackpot_no':
+      await ctx.scene.leave();
+      await sendMainMenu(ctx);
+      break;
+    default:
+      await ctx.reply('⚠️ Unknown action in Jackpot. Please try again.', {
+        parse_mode: 'Markdown',
+      });
+  }
+  await ctx.answerCbQuery();
+});
+
+// --------------------- Scene Registration (add JACKPOT_SCENE) ---------------------
 const stage = new Scenes.Stage([
   registrationScene,
   playScene,
@@ -657,11 +818,11 @@ const stage = new Scenes.Stage([
   balanceScene,
   helpScene,
   withdrawScene,
+  jackpotScene, // Added Jackpot Scene
 ]);
 bot.use(stage.middleware());
 
 // --------------------- /start Command ---------------------
-
 bot.start(async (ctx) => {
   const telegramId = ctx.from.id;
   try {
@@ -679,8 +840,13 @@ bot.start(async (ctx) => {
 });
 
 // --------------------- Global Callback Query Handler ---------------------
+bot.on('callback_query', async (ctx, next) => {
+  // **NEW**: Check if the user is in a scene
+  if (ctx.scene.current) {
+    // User is in a scene; let the scene handle the callback query
+    return;
+  }
 
-bot.on('callback_query', async (ctx) => {
   const data = ctx.callbackQuery.data;
   const telegramId = ctx.from.id;
 
@@ -714,6 +880,35 @@ bot.on('callback_query', async (ctx) => {
         logger.info(`Entering withdraw_scene for Telegram ID ${telegramId}`);
         await ctx.scene.enter('withdraw_scene');
         break;
+
+      // *** NEW *** Handle 'main_menu' callback data
+      case 'main_menu':
+        logger.info(`Returning to main menu for Telegram ID ${telegramId}`);
+        await sendMainMenu(ctx);
+        break;
+
+      // *** NEW *** View Pool pot
+      case 'view_pool': {
+        try {
+          const potBN = await usdcContract.balanceOf(process.env.POOL_ADDRESS);
+          const pot = parseFloat(ethers.utils.formatUnits(potBN, 6));
+          await ctx.reply(`🏆 *Current Pool Pot:* ${pot.toFixed(2)} USDC`, {
+            parse_mode: 'Markdown',
+          });
+          logger.info(`User ${telegramId} viewed the pool pot: ${pot} USDC`);
+        } catch (err) {
+          logger.error('Error fetching pool pot:', err);
+          await ctx.reply('❌ Failed to fetch pool pot. Please try again later.');
+        }
+        break;
+      }
+
+      // *** NEW *** If user taps "jackpot_bet"
+      case 'jackpot_bet':
+        logger.info(`User ${telegramId} proceeding to jackpot_scene`);
+        await ctx.scene.enter('jackpot_scene');
+        break;
+
       default:
         logger.warn(`Unknown action received: ${data} from Telegram ID ${telegramId}`);
         await ctx.reply('⚠️ *Unknown action.* Please try again.', { parse_mode: 'Markdown' });
@@ -724,14 +919,15 @@ bot.on('callback_query', async (ctx) => {
   }
 });
 
-// --------------------- Withdrawal Input Handlers ---------------------
-
+// --------------------- Withdrawal Input Handlers (When user types an amount) ---------------------
 bot.on('text', async (ctx) => {
   const telegramId = ctx.from.id;
   const user = await sqliteDB.getUserByTelegramId(telegramId);
 
   if (!user) {
-    await ctx.reply('❌ You are not registered. Please use /start to register your wallet address.');
+    await ctx.reply(
+      '❌ You are not registered. Please use /start to register your wallet address.'
+    );
     return;
   }
 
@@ -762,7 +958,7 @@ bot.on('text', async (ctx) => {
     }
 
     try {
-      await ctx.reply('🔄 *Processing your ETH withdrawal...*\n\nPlease wait while we complete your transaction.', {
+      await ctx.reply('🔄 *Processing your ETH withdrawal...*', {
         parse_mode: 'Markdown',
       });
 
@@ -776,7 +972,7 @@ bot.on('text', async (ctx) => {
         { parse_mode: 'Markdown', disable_web_page_preview: true }
       );
 
-      logger.info(`User ${telegramId} withdrew ${amount} ETH. Transaction Hash: ${txHash}`);
+      logger.info(`User ${telegramId} withdrew ${amount} ETH. TX Hash: ${txHash}`);
 
       ctx.session.state = null;
       await ctx.scene.leave();
@@ -812,7 +1008,7 @@ bot.on('text', async (ctx) => {
     }
 
     try {
-      await ctx.reply('🔄 *Processing your USDC withdrawal...*\n\nPlease wait while we complete your transaction.', {
+      await ctx.reply('🔄 *Processing your USDC withdrawal...*', {
         parse_mode: 'Markdown',
       });
 
@@ -826,7 +1022,7 @@ bot.on('text', async (ctx) => {
         { parse_mode: 'Markdown', disable_web_page_preview: true }
       );
 
-      logger.info(`User ${telegramId} withdrew ${amount} USDC. Transaction Hash: ${txHash}`);
+      logger.info(`User ${telegramId} withdrew ${amount} USDC. TX Hash: ${txHash}`);
 
       ctx.session.state = null;
       await ctx.scene.leave();
@@ -836,6 +1032,7 @@ bot.on('text', async (ctx) => {
       logger.error(`Failed USDC withdrawal for Telegram ID ${telegramId}:`, error);
     }
   } else {
+    // Not in a recognized input state
     await ctx.reply(
       '⚠️ *Unrecognized command or state.* Please use the main menu or /help for assistance.',
       { parse_mode: 'Markdown' }
@@ -943,7 +1140,6 @@ if (MODE === 'webhook') {
   const app = express();
   app.use(express.json());
 
-  // Endpoint for Telegram updates
   const path = `/webhook/${bot.token}`;
   app.use(path, (req, res) => {
     bot.handleUpdate(req.body, res);
@@ -954,13 +1150,16 @@ if (MODE === 'webhook') {
     logger.info(`🚀 Bot is running in webhook mode on port ${PORT}`);
   });
 
-  // Set your external webhook URL in your .env
-  // e.g., WEBHOOK_URL=https://yourapp.onrender.com
-  bot.telegram.setWebhook(`${process.env.WEBHOOK_URL}${path}`).catch((err) => {
-    logger.error('❌ Error setting webhook:', err);
-  });
+  bot.telegram
+    .setWebhook(`${process.env.WEBHOOK_URL}${path}`)
+    .then(() => {
+      logger.info(`✅ Webhook set: ${process.env.WEBHOOK_URL}${path}`);
+    })
+    .catch((err) => {
+      logger.error('❌ Error setting webhook:', err);
+    });
 } else {
-  // Launch in polling mode (local environment)
+  // Polling mode
   bot
     .launch()
     .then(() => {
@@ -973,7 +1172,6 @@ if (MODE === 'webhook') {
 }
 
 // --------------------- Graceful Shutdown ---------------------
-
 process.once('SIGINT', () => {
   bot.stop('SIGINT');
   logger.info('🛑 Bot stopped gracefully (SIGINT).');
