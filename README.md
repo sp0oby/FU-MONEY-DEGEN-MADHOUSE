@@ -4,7 +4,7 @@ A Telegram bot that allows users to play slot games using USDC on the Sepolia Te
 
 ## 🛠️ **Features**
 
-- **User Registration**: Register with your Ethereum wallet address.
+- **User Registration**: Register with your Ethereum wallet address on BASE.
 - **Deposits**: Deposit ETH and USDC to your account.
 - **Play Slots**: Place bets and spin the slot machine.
 - **Win Payouts**: Receive 2x your bet amount on winning.
