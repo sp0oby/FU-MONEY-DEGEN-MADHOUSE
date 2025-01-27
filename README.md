@@ -1,4 +1,4 @@
-# FU MONEY Slots Bot
+# FU MONEY DEGEN MADHOUSE
 
 A Telegram bot that allows users to play slot games using USDC on the Sepolia Testnet. Users can deposit funds, place bets, win payouts, and participate in Jackpot Bets.
 
