@@ -2,127 +2,160 @@
 
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
-const logger = require('../services/logger');
 
-// Initialize SQLite Database
-const dbPath = path.resolve(__dirname, 'users.db');
+// Initialize SQLite database
+const dbPath = path.resolve(__dirname, '../database.sqlite');
 const db = new sqlite3.Database(dbPath, (err) => {
   if (err) {
-    logger.error('Error connecting to SQLite database:', err);
+    console.error('Error opening SQLite database:', err);
   } else {
-    logger.info('Connected to SQLite database.');
+    console.log('Connected to SQLite database.');
   }
 });
 
-// Initialize Users and Jackpot Tables
-const initDB = () => {
-  const createUsersTable = `
+// Create necessary tables if they don't exist
+db.serialize(() => {
+  // Users table with username
+  db.run(`
     CREATE TABLE IF NOT EXISTS users (
       telegram_id INTEGER PRIMARY KEY,
+      username TEXT,
       wallet_address TEXT NOT NULL,
       eth_balance REAL NOT NULL DEFAULT 0,
-      usdc_balance REAL NOT NULL DEFAULT 0
+      usdc_balance REAL NOT NULL DEFAULT 0,
+      last_claim TEXT DEFAULT NULL
     )
-  `;
+  `);
 
-  const createJackpotTable = `
+  // Jackpot pool table (single row)
+  db.run(`
     CREATE TABLE IF NOT EXISTS jackpot (
       id INTEGER PRIMARY KEY CHECK (id = 1),
-      total_usdc REAL NOT NULL DEFAULT 0
+      usdc_pool REAL NOT NULL DEFAULT 0
     )
-  `;
+  `);
 
-  db.serialize(() => {
-    db.run(createUsersTable, (err) => {
-      if (err) {
-        logger.error('Error creating users table:', err);
-      } else {
-        logger.info('Users table is ready.');
-      }
-    });
-
-    db.run(createJackpotTable, (err) => {
-      if (err) {
-        logger.error('Error creating jackpot table:', err);
-      } else {
-        logger.info('Jackpot table is ready.');
-        // Insert initial jackpot entry if not exists
-        db.run(
-          `INSERT OR IGNORE INTO jackpot (id, total_usdc) VALUES (1, 0)`,
-          (err) => {
-            if (err) {
-              logger.error('Error initializing jackpot pool:', err);
-            } else {
-              logger.info('Jackpot pool initialized.');
-            }
-          }
-        );
-      }
-    });
+  // Initialize jackpot pool if not present
+  db.get(`SELECT COUNT(*) as count FROM jackpot`, (err, row) => {
+    if (err) {
+      console.error('Error checking jackpot table:', err);
+    } else if (row.count === 0) {
+      db.run(`INSERT INTO jackpot (id, usdc_pool) VALUES (1, 0)`);
+    }
   });
-};
+});
 
-initDB();
-
-// Export database and functions
+// Export database methods
 module.exports = {
   db,
-  addOrUpdateUser: async (telegramId, walletAddress) => {
-    const query = `
-      INSERT INTO users (telegram_id, wallet_address, eth_balance, usdc_balance)
-      VALUES (?, ?, 0, 0)
-      ON CONFLICT(telegram_id) DO UPDATE SET wallet_address = excluded.wallet_address
-    `;
+
+  /**
+   * Retrieves a user by their Telegram ID.
+   * @param {number} telegramId - The Telegram ID of the user.
+   * @returns {Promise<Object>} - Resolves with user object or null.
+   */
+  getUserByTelegramId: (telegramId) => {
     return new Promise((resolve, reject) => {
-      db.run(query, [telegramId, walletAddress], function (err) {
-        if (err) reject(err);
-        else resolve();
-      });
-    });
-  },
-  getUserByTelegramId: async (telegramId) => {
-    const query = `SELECT * FROM users WHERE telegram_id = ?`;
-    return new Promise((resolve, reject) => {
+      const query = `SELECT * FROM users WHERE telegram_id = ?`;
       db.get(query, [telegramId], (err, row) => {
-        if (err) reject(err);
-        else resolve(row || null);
+        if (err) {
+          return reject(err);
+        }
+        resolve(row || null);
       });
     });
   },
-  updateUserEthBalance: async (telegramId, newBalance) => {
-    const query = `UPDATE users SET eth_balance = ? WHERE telegram_id = ?`;
+
+  /**
+   * Adds a new user or updates their wallet address and username.
+   * @param {number} telegramId - The Telegram ID of the user.
+   * @param {string} username - The Telegram username of the user.
+   * @param {string} walletAddress - The Ethereum wallet address of the user.
+   * @returns {Promise<void>}
+   */
+  addOrUpdateUser: (telegramId, username, walletAddress) => {
     return new Promise((resolve, reject) => {
+      const query = `
+        INSERT INTO users (telegram_id, username, wallet_address)
+        VALUES (?, ?, ?)
+        ON CONFLICT(telegram_id) DO UPDATE SET 
+          username = excluded.username,
+          wallet_address = excluded.wallet_address
+      `;
+      db.run(query, [telegramId, username, walletAddress], function (err) {
+        if (err) {
+          return reject(err);
+        }
+        resolve();
+      });
+    });
+  },
+
+  /**
+   * Updates a user's ETH balance.
+   * @param {number} telegramId - The Telegram ID of the user.
+   * @param {number} newBalance - The new ETH balance.
+   * @returns {Promise<void>}
+   */
+  updateUserEthBalance: (telegramId, newBalance) => {
+    return new Promise((resolve, reject) => {
+      const query = `UPDATE users SET eth_balance = ? WHERE telegram_id = ?`;
       db.run(query, [newBalance, telegramId], function (err) {
-        if (err) reject(err);
-        else resolve();
+        if (err) {
+          return reject(err);
+        }
+        resolve();
       });
     });
   },
-  updateUserUsdcBalance: async (telegramId, newBalance) => {
-    const query = `UPDATE users SET usdc_balance = ? WHERE telegram_id = ?`;
+
+  /**
+   * Updates a user's USDC balance.
+   * @param {number} telegramId - The Telegram ID of the user.
+   * @param {number} newBalance - The new USDC balance.
+   * @returns {Promise<void>}
+   */
+  updateUserUsdcBalance: (telegramId, newBalance) => {
     return new Promise((resolve, reject) => {
+      const query = `UPDATE users SET usdc_balance = ? WHERE telegram_id = ?`;
       db.run(query, [newBalance, telegramId], function (err) {
-        if (err) reject(err);
-        else resolve();
+        if (err) {
+          return reject(err);
+        }
+        resolve();
       });
     });
   },
-  // Jackpot Pool Functions
-  getJackpot: async () => {
-    const query = `SELECT total_usdc FROM jackpot WHERE id = 1`;
+
+  /**
+   * Retrieves the current jackpot pool.
+   * @returns {Promise<number>} - Resolves with the jackpot pool amount in USDC.
+   */
+  getJackpot: () => {
     return new Promise((resolve, reject) => {
+      const query = `SELECT usdc_pool FROM jackpot WHERE id = 1`;
       db.get(query, [], (err, row) => {
-        if (err) reject(err);
-        else resolve(row ? row.total_usdc : 0);
+        if (err) {
+          return reject(err);
+        }
+        resolve(row ? row.usdc_pool : 0);
       });
     });
   },
-  updateJackpot: async (newTotal) => {
-    const query = `UPDATE jackpot SET total_usdc = ? WHERE id = 1`;
+
+  /**
+   * Updates the jackpot pool.
+   * @param {number} newPoolAmount - The new jackpot pool amount in USDC.
+   * @returns {Promise<void>}
+   */
+  updateJackpot: (newPoolAmount) => {
     return new Promise((resolve, reject) => {
-      db.run(query, [newTotal], function (err) {
-        if (err) reject(err);
-        else resolve();
+      const query = `UPDATE jackpot SET usdc_pool = ? WHERE id = 1`;
+      db.run(query, [newPoolAmount], function (err) {
+        if (err) {
+          return reject(err);
+        }
+        resolve();
       });
     });
   },

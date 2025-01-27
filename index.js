@@ -243,7 +243,10 @@ const handleBet = async (ctx, betAmount) => {
       logger.info(`Transferred ${payout} USDC to user ${telegramId}. TX Hash: ${txPayout.hash}`);
       await txPayout.wait();
 
+      // Send dancing GIF
       await ctx.replyWithAnimation(randomGif); // Dancing GIF
+
+      // Send win message
       await ctx.reply(
         `🎉 *You won!*\n\nPayout: *${payout} USDC*\n\n*Your new USDC balance:* ${updatedUsdcBalance} USDC\n\n*RNG Seed:* \`${seed}\`\n*RNG Value:* \`${rng}\``,
         { parse_mode: 'Markdown' }
@@ -252,7 +255,7 @@ const handleBet = async (ctx, betAmount) => {
         `User ${telegramId} won ${payout} USDC. New USDC balance: ${updatedUsdcBalance} USDC`
       );
 
-      // *** JACKPOT Offer if user has >= 10,000 USDC ***
+      // *** JACKPOT Offer if user has >= 100 USDC ***
       if (updatedUsdcBalance >= 100) {
         await ctx.reply(
           '💥 You now have *100 USDC* or more! Want to try a *Jackpot Bet* for the entire pool?',
@@ -306,7 +309,7 @@ Choose an option below:
   // Added '💎 Jackpot Pool' button
   const inlineButtons = Markup.inlineKeyboard([
     [
-      Markup.button.callback('🎰 Play Slots', 'play'),
+      Markup.button.callback('🎰 Play Degen Madhouse', 'play'),
       Markup.button.callback('💵 Deposit Funds', 'deposit'),
     ],
     [
@@ -337,27 +340,31 @@ registrationScene.enter((ctx) => {
   logger.info(`Entering registration scene for Telegram ID ${ctx.from.id}`);
   
   const welcomeMessage = `
-👋 *Welcome to FU MONEY Slots!*
+👋 *Welcome to FU MONEY DEGEN MADHOUSE!*
+
+*TLDR; PROVIDE YOUR ETHEREUM ADDRESS TO START GAMBLING NOW.(BASE)*
 
 🎰 *About the Game:*
-Dive into the excitement of casino slots right here on Telegram! Use your FU MONEY tokens to place bets, spin the reels, and win big. Every spin brings you closer to the *Jackpot Pool*, where massive rewards await the lucky few.
+Use your FU MONEY tokens to place bets and win big. Every winning bet brings you closer to the *Jackpot Pool*, where massive rewards await the lucky few.
+
+🔗 *Open Source Project by FU STUDIOS:* [github.com/sp0oby/fu-money-mania](https://github.com/sp0oby/fu-money-mania)
 
 💰 *How It Works:*
 1. **Register:** Provide your Ethereum wallet address to get started.
 2. **Deposit:** Add FU MONEY and ETH (to pay for withdraw gas fee) to your account securely.
-3. **Play:** Choose your bet amount and spin the slots.
+3. **Play:** Choose your bet amount and play.
 4. **Win:** Earn FU MONEY based on your bet. High-rollers can participate in *Jackpot Bets* for a chance to win the entire pool!
+
+*Don't have any FU MONEY? Buy on Base: app.uniswap.org/swap?outputCurrency=0x8f4E4221ba88D4E9Bb76ECFB91d7C5ce08D7d5b9&chain=base*
 
 🔥 *Special Features:*
 - **Jackpot Pool:** Accumulate 10,000 FU MONEY or more to enter the Jackpot Bet with a chance to win the entire pool.
 - **Leaderboards:** Compete with other players and climb the rankings based on your FU MONEY and ETH balances.
-- **Secure & Transparent:** All transactions are handled securely on the Base Mainnet.
+- **Secure & Transparent:** All transactions are handled securely on the Sepolia Testnet.
 
 🔐 *Secure Registration:*
 Please send your valid Ethereum wallet address below to ensure all your winnings are safely transferred to you. Double-check your address to avoid any loss of funds.
-You private keys are never shared or stored. It is the safest and most secure way to play on-chain.
-
-🔗 *Open Source Project by FU STUDIOS:* [github.com/sp0oby/fu-money-mania](https://github.com/sp0oby/fu-money-mania)
+Your private keys are never shared or stored. It is the safest and most secure way to play on-chain.
 
 💡 *Need Help?* Use the /help command at any time to see available commands and get assistance.
 
@@ -370,6 +377,10 @@ You private keys are never shared or stored. It is the safest and most secure wa
 registrationScene.on('text', async (ctx) => {
   const telegramId = ctx.from.id;
   const walletAddress = ctx.message.text.trim();
+  const username = ctx.from.username || `${ctx.from.first_name || ''} ${ctx.from.last_name || ''}`.trim();
+
+  await sqliteDB.addOrUpdateUser(telegramId, username, walletAddress);
+logger.info(`User registered: Telegram ID ${telegramId}, Username ${username}, Wallet Address ${walletAddress}`);
 
   if (!ethers.utils.isAddress(walletAddress)) {
     await ctx.reply('❌ *Invalid Ethereum address.* Please send a valid address.', {
@@ -379,12 +390,12 @@ registrationScene.on('text', async (ctx) => {
   }
 
   try {
-    await sqliteDB.addOrUpdateUser(telegramId, walletAddress);
+    await sqliteDB.addOrUpdateUser(telegramId, username, walletAddress);
     await ctx.reply(
       '✅ *Registration successful!*\n\nYou can now use the bot commands. Use /help to see available commands.',
       { parse_mode: 'Markdown' }
     );
-    logger.info(`User registered: Telegram ID ${telegramId}, Wallet Address ${walletAddress}`);
+    logger.info(`User registered: Telegram ID ${telegramId}, Username ${username}, Wallet Address ${walletAddress}`);
     ctx.scene.leave();
     await sendMainMenu(ctx);
   } catch (error) {
@@ -403,7 +414,7 @@ registrationScene.on('message', (ctx) => {
 const playScene = new Scenes.BaseScene('play_scene');
 playScene.enter((ctx) => {
   logger.info(`Entering play_scene for Telegram ID ${ctx.from.id}`);
-  ctx.reply('🎰 *Play Slots*\n\nChoose your bet amount:', {
+  ctx.reply('🎰 *Play Degen Madhouse*\n\nChoose your bet amount:', {
     parse_mode: 'Markdown',
     ...Markup.inlineKeyboard([
       [
@@ -449,7 +460,7 @@ playScene.on('callback_query', async (ctx) => {
       await sendMainMenu(ctx);
       break;
     default:
-      await ctx.reply('⚠️ *Unknown action in Play Slots.* Please try again.', {
+      await ctx.reply('⚠️ *Unknown action in Play Degen Madhouse.* Please try again.', {
         parse_mode: 'Markdown',
       });
   }
@@ -461,7 +472,7 @@ const depositScene = new Scenes.BaseScene('deposit_scene');
 depositScene.enter(async (ctx) => {
   logger.info(`Entering deposit_scene for Telegram ID ${ctx.from.id}`);
   const poolAddress = process.env.POOL_ADDRESS;
-  const depositMessage = `📥 *Depositing Funds*\n\nPlease transfer your desired amount to the pool address below:\n\n- *USDC:* ${poolAddress}\n- *ETH:* ${poolAddress}\n\nETH will be used to withdraw your balance. Your balances will update automatically upon successful deposits.`;
+  const depositMessage = `📥 *Depositing Funds (Base)*\n\nPlease transfer your desired amount to the pool address below:\n\n- *USDC:* ${poolAddress}\n- *ETH:* ${poolAddress}\n\nYour balances will update automatically upon successful deposits.`;
 
   await ctx.reply(depositMessage, {
     parse_mode: 'Markdown',
@@ -480,7 +491,7 @@ depositScene.on('callback_query', async (ctx) => {
   switch (data) {
     case 'deposit': {
       const poolAddress = process.env.POOL_ADDRESS;
-      const updatedDepositMessage = `📥 *Depositing Funds*\n\nPlease transfer your desired amount to the pool address below:\n\n- *USDC:* ${poolAddress}\n- *ETH:* ${poolAddress}\n\nYour balances will update automatically upon successful deposits.`;
+      const updatedDepositMessage = `📥 *Depositing Funds (Base)*\n\nPlease transfer your desired amount to the pool address below:\n\n- *USDC:* ${poolAddress}\n- *ETH:* ${poolAddress}\n\nYour balances will update automatically upon successful deposits.`;
       await ctx.reply(updatedDepositMessage, { parse_mode: 'Markdown' });
       break;
     }
@@ -501,7 +512,7 @@ const leaderboardScene = new Scenes.BaseScene('leaderboard_scene');
 leaderboardScene.enter(async (ctx) => {
   logger.info(`Entering leaderboard_scene for Telegram ID ${ctx.from.id}`);
   try {
-    const query = `SELECT telegram_id, eth_balance, usdc_balance FROM users ORDER BY usdc_balance DESC, eth_balance DESC LIMIT 10`;
+    const query = `SELECT telegram_id, username, eth_balance, usdc_balance FROM users ORDER BY usdc_balance DESC, eth_balance DESC LIMIT 10`;
     sqliteDB.db.all(query, [], async (err, rows) => {
       if (err) {
         logger.error('Error fetching leaderboard:', err);
@@ -514,10 +525,17 @@ leaderboardScene.enter(async (ctx) => {
       }
       let leaderboard = '🏆 *Leaderboard*\n\n';
       rows.forEach((row, index) => {
-        leaderboard += `${index + 1}. Telegram ID: ${row.telegram_id}\n   - ETH: ${row.eth_balance.toFixed(
+        const displayName = row.username ? `@${row.username}` : `ID: ${row.telegram_id}`;
+        leaderboard += `${index + 1}. ${displayName}\n   - ETH: ${row.eth_balance.toFixed(
           6
         )} ETH\n   - USDC: ${row.usdc_balance.toFixed(6)} USDC\n\n`;
       });
+
+      // Determine the user's rank if they're in the top 10
+      const userInTop = rows.findIndex(row => row.telegram_id === ctx.from.id);
+      if (userInTop === -1) {
+        leaderboard += `🔍 *Your Rank:* Not in the top 10. Keep playing to climb the leaderboard!`;
+      }
 
       await ctx.reply(leaderboard, {
         parse_mode: 'Markdown',
@@ -541,7 +559,7 @@ leaderboardScene.on('callback_query', async (ctx) => {
   switch (data) {
     case 'leaderboard': {
       try {
-        const query = `SELECT telegram_id, eth_balance, usdc_balance FROM users ORDER BY usdc_balance DESC, eth_balance DESC LIMIT 10`;
+        const query = `SELECT telegram_id, username, eth_balance, usdc_balance FROM users ORDER BY usdc_balance DESC, eth_balance DESC LIMIT 10`;
         sqliteDB.db.all(query, [], async (err, rows) => {
           if (err) {
             logger.error('Error fetching leaderboard:', err);
@@ -554,10 +572,17 @@ leaderboardScene.on('callback_query', async (ctx) => {
           }
           let leaderboard = '🏆 *Leaderboard*\n\n';
           rows.forEach((row, index) => {
-            leaderboard += `${index + 1}. Telegram ID: ${row.telegram_id}\n   - ETH: ${row.eth_balance.toFixed(
+            const displayName = row.username ? `@${row.username}` : `ID: ${row.telegram_id}`;
+            leaderboard += `${index + 1}. ${displayName}\n   - ETH: ${row.eth_balance.toFixed(
               6
             )} ETH\n   - USDC: ${row.usdc_balance.toFixed(6)} USDC\n\n`;
           });
+
+          // Determine the user's rank if they're in the top 10
+          const userInTop = rows.findIndex(row => row.telegram_id === ctx.from.id);
+          if (userInTop === -1) {
+            leaderboard += `🔍 *Your Rank:* Not in the top 10. Keep playing to climb the leaderboard!`;
+          }
 
           await ctx.reply(leaderboard, {
             parse_mode: 'Markdown',
@@ -609,11 +634,14 @@ balanceScene.enter(async (ctx) => {
       ...Markup.inlineKeyboard([
         [
           Markup.button.callback('🔄 Refresh Balance', 'balance'),
-          Markup.button.callback('🎰 Play Slots', 'play'),
+          Markup.button.callback('🎰 Play Degen Madhouse', 'play'),
         ],
         [
           Markup.button.callback('💵 Deposit Funds', 'deposit'),
           Markup.button.callback('💰 Withdraw Funds', 'withdraw'),
+        ],
+        [
+          Markup.button.callback('🏠 Go Back to Main Menu', 'main_menu'), // New Button Added
         ],
       ]),
     });
@@ -622,6 +650,7 @@ balanceScene.enter(async (ctx) => {
     logger.error(`Error fetching balances for Telegram ID ${telegramId}:`, error);
   }
 });
+
 
 balanceScene.on('callback_query', async (ctx) => {
   const data = ctx.callbackQuery.data;
@@ -644,11 +673,14 @@ balanceScene.on('callback_query', async (ctx) => {
           ...Markup.inlineKeyboard([
             [
               Markup.button.callback('🔄 Refresh Balance', 'balance'),
-              Markup.button.callback('🎰 Play Slots', 'play'),
+              Markup.button.callback('🎰 Play Degen Madhouse', 'play'),
             ],
             [
               Markup.button.callback('💵 Deposit Funds', 'deposit'),
               Markup.button.callback('💰 Withdraw Funds', 'withdraw'),
+            ],
+            [
+              Markup.button.callback('🔙 Go Back to Main Menu', 'main_menu'), // New Button Added
             ],
           ]),
         });
@@ -667,6 +699,10 @@ balanceScene.on('callback_query', async (ctx) => {
     case 'withdraw':
       await ctx.scene.enter('withdraw_scene');
       break;
+    case 'main_menu': // New Case Added
+      await ctx.scene.leave();
+      await sendMainMenu(ctx);
+      break;
     default:
       await ctx.reply('⚠️ *Unknown action in Balance.* Please try again.', {
         parse_mode: 'Markdown',
@@ -680,28 +716,18 @@ const helpScene = new Scenes.BaseScene('help_scene');
 helpScene.enter(async (ctx) => {
   logger.info(`Entering help_scene for Telegram ID ${ctx.from.id}`);
   const helpMessage = `
-📖 *Slots Bot Commands:*
+📖 *FU MONEY DEGEN MADHOUSE HELP:*
 
-- /start: Register your Ethereum wallet address.
-- /help: Show this help message.
-- /balance: View your ETH and USDC balances.
-- /deposit: Get instructions to deposit ETH or USDC.
-- /withdraw: Withdraw ETH or USDC from your balance.
-- /play: Play the slots game using your USDC balance.
-- /leaderboard: View the top 10 users based on their balances.
+- /start: Register your Ethereum wallet address on Base Mainnet.
 
-*How to Use the Bot:*
-
-1. *Register:* Start by sending /start and provide your Ethereum wallet address when prompted.
-2. *Deposit:* Use /deposit to find out how to add ETH or USDC to your account.
-3. *Play:* Engage in the slots game by sending /play and choosing your bet amount.
-4. *Withdraw:* Retrieve your funds anytime using /withdraw.
-5. *Check Balances:* Monitor your ETH and USDC balances with /balance.
-6. *Leaderboard:* See how you rank against other users with /leaderboard.
+*Don't have any FU MONEY? Buy on Base: app.uniswap.org/swap?outputCurrency=0x8f4E4221ba88D4E9Bb76ECFB91d7C5ce08D7d5b9&chain=base*
 
 Feel free to reach out if you have any questions or need assistance!
 
-Open Source Project from FU STUDIOS: github.com/sp0oby/fu-money-mania
+Telegram: t.me/FU\\_Studios
+Twitter: x.com/fu\\_studios
+
+Open Source Project by FU STUDIOS: [github.com/sp0oby/fu-money-mania](https://github.com/sp0oby/fu-money-mania)
   `;
 
   await ctx.reply(helpMessage, {
@@ -712,12 +738,16 @@ Open Source Project from FU STUDIOS: github.com/sp0oby/fu-money-mania
         Markup.button.callback('💰 Withdraw Funds', 'withdraw'),
       ],
       [
-        Markup.button.callback('🎰 Play Slots', 'play'),
+        Markup.button.callback('🎰 Play Degen Madhouse', 'play'),
         Markup.button.callback('🔍 Check Balance', 'balance'),
+      ],
+      [
+        Markup.button.callback('🔙 Go Back to Main Menu', 'main_menu'), // New Button Added
       ],
     ]),
   });
 });
+
 
 helpScene.on('callback_query', async (ctx) => {
   const data = ctx.callbackQuery.data;
@@ -735,6 +765,10 @@ helpScene.on('callback_query', async (ctx) => {
     case 'balance':
       await ctx.scene.enter('balance_scene');
       break;
+    case 'main_menu': // New Case Added
+      await ctx.scene.leave();
+      await sendMainMenu(ctx);
+      break;
     default:
       await ctx.reply('⚠️ *Unknown action in Help.* Please try again.', {
         parse_mode: 'Markdown',
@@ -742,6 +776,7 @@ helpScene.on('callback_query', async (ctx) => {
   }
   await ctx.answerCbQuery();
 });
+
 
 // Withdraw Scene
 const withdrawScene = new Scenes.BaseScene('withdraw_scene');
@@ -792,7 +827,7 @@ withdrawScene.on('callback_query', async (ctx) => {
     }
   } catch (error) {
     logger.error(`Error handling withdraw_scene callback query '${data}' for Telegram ID ${ctx.from.id}:`, error);
-    // No need to reply to the user since we already tried to answer the callback query
+    // No need to reply to user since we already tried to answer the callback query
   }
 });
 
@@ -831,19 +866,19 @@ jackpotScene.on('callback_query', async (ctx) => {
             await ctx.scene.leave();
             return;
           }
-          // Check 10,000 USDC
+          // Check 100 USDC
           if (user.usdc_balance < 100) {
             await ctx.reply('❌ You no longer have 100 USDC. Bet canceled.');
             await ctx.scene.leave();
             return;
           }
 
-          // Deduct 10,000 from user's USDC balance
+          // Deduct 100 from user's USDC balance
           const newUsdcBalance = parseFloat((user.usdc_balance - 100).toFixed(6));
           await sqliteDB.updateUserUsdcBalance(telegramId, newUsdcBalance);
           logger.info(`User ${telegramId} placed a Jackpot Bet of 100 USDC. New USDC balance: ${newUsdcBalance} USDC`);
 
-          // Add 10,000 USDC to the jackpot pool
+          // Add 100 USDC to the jackpot pool
           const currentJackpot = await sqliteDB.getJackpot();
           const newJackpot = parseFloat((currentJackpot + 100).toFixed(6));
           await sqliteDB.updateJackpot(newJackpot);
@@ -939,7 +974,7 @@ jackpotScene.on('callback_query', async (ctx) => {
   }
 });
 
-// --------------------- Scene Registration (No Duplicates) ---------------------
+// --------------------- Scene Registration (add JACKPOT_SCENE) ---------------------
 const stage = new Scenes.Stage([
   registrationScene,
   playScene,
