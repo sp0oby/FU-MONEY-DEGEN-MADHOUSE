@@ -1,25 +1,30 @@
 // services/logger.js
 
 const { createLogger, format, transports } = require('winston');
-const path = require('path');
+const { combine, timestamp, printf, colorize } = format;
 
-// Define log format
-const logFormat = format.printf(({ level, message, timestamp }) => {
-  return `${timestamp} [${level.toUpperCase()}]: ${message}`;
+// Define a custom log format
+const customFormat = printf(({ level, message, timestamp }) => {
+  return `${timestamp} [${level}]: ${message}`;
 });
 
-// Create logger
+// Create the logger
 const logger = createLogger({
-  level: 'info',
-  format: format.combine(
-    format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-    logFormat
+  level: 'info', // Set the minimum log level
+  format: combine(
+    colorize(), // Colorize the output
+    timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+    customFormat
   ),
   transports: [
-    new transports.File({ filename: path.resolve(__dirname, '../logs/error.log'), level: 'error' }),
-    new transports.File({ filename: path.resolve(__dirname, '../logs/combined.log') }),
+    new transports.Console(),
+    // Optional: Log to a file
+    // new transports.File({ filename: 'bot.log' }),
   ],
 });
+
+module.exports = logger;
+
 
 // If we're not in production then **ALSO** log to the `console`
 if (process.env.NODE_ENV !== 'production') {
